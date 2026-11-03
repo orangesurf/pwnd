@@ -1,0 +1,11 @@
+.build/
+build/
+.swiftpm/
+
+# Local development helpers that are not part of the project.
+/index.html
+/designs.html
+/server.py
+/scripts/air/
+docs/
+/icon-editor.html
