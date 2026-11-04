@@ -60,6 +60,7 @@ struct Card<Content: View>: View {
 
 struct ContentView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.openWindow) private var openWindow
     @State private var sidebar: SidebarItem? = .all
     @State private var selection: Set<String> = []
     @State private var showingAdd = false
@@ -101,6 +102,10 @@ struct ContentView: View {
             // re-laying out items owned by different columns.
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
+                    Button { openWindow(id: "servers") } label: { Image(systemName: "server.rack") }
+                        .help("Servers")
+                }
+                ToolbarItem(placement: .primaryAction) {
                     SettingsLink { Image(systemName: "gearshape") }
                         .help("Settings")
                 }
@@ -108,6 +113,10 @@ struct ContentView: View {
         }
         .searchable(text: $query, placement: .toolbar, prompt: "Search releases")
         .sheet(isPresented: $showingAdd) { AddFeedSheet(group: currentGroup) }
+        // A server deleted in the Servers window can't stay selected here.
+        .onChange(of: model.servers.map(\.id)) { _, ids in
+            if case .server(let s) = sidebar, !ids.contains(s) { sidebar = .all; selection = [] }
+        }
         .onChange(of: model.generation) { _, _ in
             sidebar = .all
             selection = []
@@ -283,6 +292,7 @@ struct EntryList: View {
         case .all: return "All Feeds"
         case .group(let g): return model.groupName(g)
         case .feed(let f): return model.feedName(f)
+        case .server(let s): return model.serverName(s)
         }
     }
 
@@ -310,6 +320,7 @@ struct EntryList: View {
         @AppStorage("filter.minimum") private var minimum = Severity.routine.rawValue
         @State private var renaming: FeedGroup?
         @State private var confirmUnsubscribe: Feed?
+        @Environment(\.openWindow) private var openWindow
 
         private var severityMenu: some View {
             Menu {
@@ -338,6 +349,14 @@ struct EntryList: View {
                     feedMenu(feed)
                 } else if case .group(let gid) = sidebar ?? .all, let g = model.groups.first(where: { $0.id == gid }) {
                     groupMenu(g)
+                } else if case .server(let sid) = sidebar ?? .all {
+                    Button {
+                        model.focusServer = sid
+                        openWindow(id: "servers")
+                    } label: {
+                        Label("Open in Servers", systemImage: "server.rack")
+                    }
+                    .help("Edit this server and its software")
                 }
             }
             .controlSize(.small)

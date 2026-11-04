@@ -12,6 +12,7 @@ import SwiftUI
 /// out of its group.
 struct Sidebar: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.openWindow) private var openWindow
     @Binding var selection: SidebarItem?
     @Binding var showingAdd: Bool
     @State private var naming: GroupNaming?
@@ -68,6 +69,9 @@ struct Sidebar: View {
                 .onTapGesture { selection = .all }
                 .contextMenu { Button("Move All to Old") { model.markAllRead(in: .all) } }
                 .padding(.bottom, 10)
+
+                serversSection
+                    .padding(.bottom, 10)
 
                 ForEach(model.topLevel) { item in
                     switch item {
@@ -127,6 +131,69 @@ struct Sidebar: View {
     }
 
     private func feed(_ id: UUID) -> Feed? { model.feeds.first { $0.id == id } }
+
+    // MARK: - Servers
+
+    /// Opens the Servers window, selecting `server` if given.
+    private func openServers(_ server: UUID?) {
+        if let server { model.focusServer = server }
+        openWindow(id: "servers")
+    }
+
+    /// A "Servers" heading that opens the Servers window, then one row per
+    /// server. Selecting a server lists the releases of its software;
+    /// double-clicking opens it in the Servers window.
+    private var serversSection: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 4) {
+                Text("SERVERS")
+                    .font(.system(size: 10, weight: .semibold))
+                    .kerning(0.4)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button { openServers(nil) } label: {
+                    Label("Manage", systemImage: "arrow.up.forward.app")
+                        .font(.caption)
+                        .labelStyle(.titleAndIcon)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .help("Open the Servers window (⌘2)")
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 20)
+
+            if model.servers.isEmpty {
+                row(selected: false) {
+                    Label("Add a Server…", systemImage: "plus.rectangle.on.rectangle")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .onTapGesture { openServers(nil) }
+                .help("Track which machines run which software")
+            }
+            ForEach(model.servers) { server in
+                let status = ServerStatus(server, model: model)
+                row(selected: selection == .server(server.id)) {
+                    Image(systemName: "server.rack").frame(width: 16)
+                    Text(server.name).lineLimit(1)
+                    Spacer(minLength: 4)
+                    Image(systemName: status.symbol)
+                        .foregroundStyle(status.color)
+                        .font(.caption)
+                        .help(status.text)
+                    badge(model.unreadCount(.server(server.id)))
+                }
+                .onTapGesture(count: 2) { openServers(server.id) }
+                .simultaneousGesture(TapGesture().onEnded { selection = .server(server.id) })
+                .help(server.address.isEmpty ? server.name : "\(server.name) · \(server.address)")
+                .contextMenu {
+                    Button("Open in Servers") { openServers(server.id) }
+                    Button("Move All to Old") { model.markAllRead(in: .server(server.id)) }
+                }
+            }
+        }
+    }
 
     // MARK: - Rows
 

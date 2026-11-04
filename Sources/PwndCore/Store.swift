@@ -47,15 +47,18 @@ public struct Snapshot: Codable, Sendable {
     public var entries: [Entry]
     public var settings: AppSettings
     public var budget: RequestBudget
+    /// Machines and the software (feeds) installed on them.
+    public var servers: [Server]
 
     public init(groups: [FeedGroup] = [], order: [UUID] = [], feeds: [Feed], entries: [Entry], settings: AppSettings,
-                budget: RequestBudget = RequestBudget()) {
+                budget: RequestBudget = RequestBudget(), servers: [Server] = []) {
         self.groups = groups
         self.order = order
         self.feeds = feeds
         self.entries = entries
         self.settings = settings
         self.budget = budget
+        self.servers = servers
     }
 
     // Written by hand so state saved before groups existed still loads.
@@ -68,6 +71,7 @@ public struct Snapshot: Codable, Sendable {
         entries = try c.decode([Entry].self, forKey: .entries)
         settings = try c.decode(AppSettings.self, forKey: .settings)
         budget = try c.decodeIfPresent(RequestBudget.self, forKey: .budget) ?? RequestBudget()
+        servers = try c.decodeIfPresent([Server].self, forKey: .servers) ?? []
     }
 }
 

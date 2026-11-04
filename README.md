@@ -42,6 +42,10 @@ Feeds → Paste Feed List… (⇧⌘V) reads OPML from the clipboard, or plain l
 
 pwnd scores only what the feed contains. Some projects publish little in the release itself: Bitcoin Core's GitHub release text is just download links, and its security disclosures are published at `https://bitcoincore.org/en/rss.xml`, which you can add as a feed.
 
+## Servers
+
+The Servers section of the main sidebar, Window → Servers (⌘2), or the rack button in the main toolbar keeps track of which machines run which software, laid out like a VM manager. Click **New** and give the server a name and an IPv4/IPv6 address or hostname. Then add software from the catalog on the right (your feeds, grouped as in the sidebar): drag a row onto the server in the list or onto its Installed Software box, double-click it, or type in the "Search software to add…" field and press Return. Each server shows its status: up to date, new releases, or security updates, counted from New releases of its software. In the main sidebar, selecting a server lists the releases of its software; double-click it, or use Open in Servers, to edit it. Removing a server leaves its feeds subscribed; unsubscribing a feed removes it from every server.
+
 ## How scoring works
 
 Each entry's title and notes are checked against three keyword lists, editable in Settings → Keywords:
