@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking // URLSession lives here on Linux
+#endif
 
 public enum FetchResult: Sendable {
     /// 304: the server says nothing changed since the stored validators.

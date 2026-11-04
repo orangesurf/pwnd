@@ -1,10 +1,17 @@
-name: Build
+name: CI
+
+# Hosted macOS runners can take a long time to be assigned, Linux ones start
+# almost at once. PwndCore and its tests are plain Foundation, so they run on
+# Linux for fast feedback; the macOS job (app build, plus the same tests
+# against Apple's Foundation) runs alongside and does not block it.
 
 on:
   push:
     branches: [main]
     tags: ['v*']
+    paths-ignore: ['**.md', 'LICENSE', '.gitignore']
   pull_request:
+    paths-ignore: ['**.md', 'LICENSE', '.gitignore']
   workflow_dispatch:
 
 concurrency:
@@ -15,8 +22,28 @@ permissions:
   contents: read
 
 jobs:
-  app:
-    name: pwnd.app
+  test-linux:
+    name: Test (Linux)
+    runs-on: ubuntu-latest
+    # Same Swift as the Xcode the app is built with.
+    container: swift:6.4-noble
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Show toolchain
+        run: swift --version
+
+      # On Linux, Package.swift leaves out the SwiftUI app, so this builds
+      # PwndCore, pwnd-scan and the tests.
+      - name: Build
+        run: swift build --build-tests
+
+      - name: Run tests
+        run: swift test --skip-build --parallel
+
+  macos:
+    name: Test and build app (macOS)
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
@@ -26,6 +53,14 @@ jobs:
         run: |
           xcodebuild -version
           swift --version
+
+      # Builds every target, including the app, so a compile error in the UI
+      # code fails here. The tests take about a second, so they run here too.
+      - name: Build all targets
+        run: swift build --build-tests
+
+      - name: Run tests
+        run: swift test --skip-build --parallel
 
       - name: Build app bundle
         run: ./scripts/build-app.sh

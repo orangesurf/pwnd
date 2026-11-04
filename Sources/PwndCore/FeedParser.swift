@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationXML)
+import FoundationXML // XMLParser lives here on Linux
+#endif
 
 public enum FeedParseError: Error, CustomStringConvertible {
     case invalidXML(String)
