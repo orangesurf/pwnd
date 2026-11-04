@@ -33,6 +33,14 @@ struct PwndApp: App {
             }
         }
 
+        // Machines and the software they run, laid out like a VM manager.
+        Window("Servers", id: "servers") {
+            ServersView()
+                .environmentObject(model)
+                .frame(minWidth: 860, minHeight: 500)
+        }
+        .keyboardShortcut("2", modifiers: [.command])
+
         Settings {
             SettingsView()
                 .environmentObject(model)
@@ -156,6 +164,10 @@ struct MenuBarContent: View {
         Divider()
         Button("Open pwnd") {
             openWindow(id: "main")
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        Button("Servers") {
+            openWindow(id: "servers")
             NSApp.activate(ignoringOtherApps: true)
         }
         Button(model.refreshing ? "Refreshing…" : "Refresh Now") { model.refreshNow() }

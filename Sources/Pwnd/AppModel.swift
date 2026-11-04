@@ -8,6 +8,8 @@ enum SidebarItem: Hashable {
     case all
     case group(UUID)
     case feed(UUID)
+    /// The releases of the software installed on a server.
+    case server(UUID)
 }
 
 /// The filter bar above the release list.
@@ -35,6 +37,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var order: [UUID] = []
     @Published private(set) var feeds: [Feed] = []
     @Published private(set) var entries: [Entry] = []
+    @Published private(set) var servers: [Server] = []
+    /// A server the Servers window should select when it next shows, set by
+    /// the main window's sidebar.
+    @Published var focusServer: UUID?
     @Published var settings: AppSettings = .defaults {
         didSet { if settings != oldValue { settingsChanged(from: oldValue) } }
     }
@@ -68,6 +74,7 @@ final class AppModel: ObservableObject {
             order = snap.order
             feeds = snap.feeds
             entries = snap.entries
+            servers = snap.servers
             // Version 3 replaced read/unread with New/Old and starts everything
             // in New; earlier installs had history filed as read.
             if snap.version < 3 { for i in entries.indices { entries[i].read = false } }
@@ -107,6 +114,9 @@ final class AppModel: ObservableObject {
             let members = Set(feeds.filter { $0.groupID == gid }.map(\.id))
             base = entries.filter { members.contains($0.feedID) }
         case .feed(let id): base = entries.filter { $0.feedID == id }
+        case .server(let sid):
+            let installed = Set(servers.first { $0.id == sid }?.feedIDs ?? [])
+            base = entries.filter { installed.contains($0.feedID) }
         }
         return base.filter(filter.matches).sorted(by: Entry.newestFirst)
     }
@@ -532,8 +542,75 @@ final class AppModel: ObservableObject {
 
     func removeFeed(_ id: UUID) {
         feeds.removeAll { $0.id == id }
+        for i in servers.indices { servers[i].uninstall([id]) }
         entries.removeAll { $0.feedID == id }
         save()
+    }
+
+    // MARK: - Servers
+
+    /// Adds a server and returns its id. Name and address are trimmed; a
+    /// blank name becomes the address, or "New Server".
+    @discardableResult
+    func addServer(name: String, address: String, feedIDs: [UUID] = []) -> UUID {
+        let addr = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        var n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if n.isEmpty { n = addr.isEmpty ? "New Server" : addr }
+        let s = Server(name: n, address: addr, feedIDs: feedIDs.filter { id in feeds.contains { $0.id == id } })
+        servers.append(s)
+        save()
+        return s.id
+    }
+
+    func updateServer(_ id: UUID, _ change: (inout Server) -> Void) {
+        guard let i = servers.firstIndex(where: { $0.id == id }) else { return }
+        var s = servers[i]
+        change(&s)
+        s.name = s.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        s.address = s.address.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.name.isEmpty { s.name = servers[i].name }
+        guard s != servers[i] else { return }
+        servers[i] = s
+        save()
+    }
+
+    func serverName(_ id: UUID) -> String { servers.first { $0.id == id }?.name ?? "?" }
+
+    func removeServer(_ id: UUID) {
+        servers.removeAll { $0.id == id }
+        save()
+    }
+
+    func moveServers(from source: IndexSet, to destination: Int) {
+        servers.move(fromOffsets: source, toOffset: destination)
+        save()
+    }
+
+    func install(_ feedIDs: [UUID], on server: UUID) {
+        let known = feedIDs.filter { id in feeds.contains { $0.id == id } }
+        updateServer(server) { $0.install(known) }
+    }
+
+    func uninstall(_ feedIDs: Set<UUID>, from server: UUID) {
+        updateServer(server) { $0.uninstall(feedIDs) }
+    }
+
+    /// Installed software that still exists, in install order.
+    func software(on server: Server) -> [Feed] {
+        server.feedIDs.compactMap { id in feeds.first { $0.id == id } }
+    }
+
+    /// New (unread) releases for a server's software at or above `minimum`.
+    func newReleases(on server: Server, minimum: Severity = .routine) -> [Entry] {
+        let ids = Set(server.feedIDs)
+        return entries.filter { ids.contains($0.feedID) && !$0.read && $0.severity >= minimum }
+            .sorted(by: Entry.newestFirst)
+    }
+
+    /// The latest release title for a feed, used as the "version" column.
+    func latestRelease(_ feedID: UUID) -> Entry? {
+        entries.filter { $0.feedID == feedID && $0.kind != .tagOnly }.max { a, b in Entry.newestFirst(b, a) }
+            ?? entries.filter { $0.feedID == feedID }.max { a, b in Entry.newestFirst(b, a) }
     }
 
     // MARK: - Groups
@@ -718,6 +795,7 @@ final class AppModel: ObservableObject {
 
         (groups, feeds, order) = DefaultFeeds.make()
         entries = []
+        servers = []
         settings = .defaults
         classifier = Classifier(settings.keywords)
         saveError = nil
@@ -729,7 +807,7 @@ final class AppModel: ObservableObject {
 
     func save() {
         do {
-            try persistence.save(Snapshot(groups: groups, order: order, feeds: feeds, entries: entries, settings: settings, budget: evidence.budget))
+            try persistence.save(Snapshot(groups: groups, order: order, feeds: feeds, entries: entries, settings: settings, budget: evidence.budget, servers: servers))
             saveError = nil
         } catch {
             saveError = "Could not save state: \(error.localizedDescription)"
