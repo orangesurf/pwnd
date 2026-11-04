@@ -1,0 +1,57 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    name: pwnd.app
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Build app bundle
+        run: ./scripts/build-app.sh
+
+      # build-app.sh ignores codesign failures (`|| true`), so check the
+      # bundle explicitly before publishing it.
+      - name: Verify bundle
+        run: |
+          APP=build/pwnd.app
+          test -x "$APP/Contents/MacOS/pwnd"
+          test -f "$APP/Contents/Resources/AppIcon.icns"
+          plutil -lint "$APP/Contents/Info.plist"
+          codesign --verify --strict --verbose=2 "$APP"
+          lipo -info "$APP/Contents/MacOS/pwnd"
+
+      - name: Package
+        id: package
+        run: |
+          NAME="pwnd-${GITHUB_REF_NAME//\//-}-${GITHUB_SHA::7}"
+          # ditto keeps the bundle's symlinks, permissions and signature intact.
+          ditto -c -k --keepParent build/pwnd.app "$NAME.zip"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: ${{ steps.package.outputs.name }}.zip
+          if-no-files-found: error
+          retention-days: 30
