@@ -11,13 +11,26 @@ public struct Server: Codable, Identifiable, Hashable, Sendable {
     public var notes: String
     /// Installed software, in the order it was added.
     public var feedIDs: [UUID]
+    /// The version each piece of software runs, as typed, keyed by feed ID
+    /// string. Missing means not set.
+    public var versions: [String: String]
 
-    public init(name: String, address: String, notes: String = "", feedIDs: [UUID] = []) {
+    public init(name: String, address: String, notes: String = "", feedIDs: [UUID] = [], versions: [String: String] = [:]) {
         self.id = UUID()
         self.name = name
         self.address = address
         self.notes = notes
         self.feedIDs = feedIDs
+        self.versions = versions
+    }
+
+    public func version(of feed: UUID) -> String? { versions[feed.uuidString] }
+
+    /// Sets or, when blank, clears the running version of installed software.
+    public mutating func setVersion(_ version: String?, for feed: UUID) {
+        let v = version?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard feedIDs.contains(feed) else { return }
+        versions[feed.uuidString] = v.isEmpty ? nil : v
     }
 
     public init(from decoder: Decoder) throws {
@@ -27,6 +40,7 @@ public struct Server: Codable, Identifiable, Hashable, Sendable {
         address = try c.decodeIfPresent(String.self, forKey: .address) ?? ""
         notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
         feedIDs = try c.decodeIfPresent([UUID].self, forKey: .feedIDs) ?? []
+        versions = try c.decodeIfPresent([String: String].self, forKey: .versions) ?? [:]
     }
 
     /// Adds software not already installed; returns true if anything changed.
@@ -39,6 +53,47 @@ public struct Server: Codable, Identifiable, Hashable, Sendable {
 
     public mutating func uninstall(_ ids: Set<UUID>) {
         feedIDs.removeAll { ids.contains($0) }
+        for id in ids { versions[id.uuidString] = nil }
+    }
+
+    /// Drops software whose feed is no longer subscribed; returns true if anything changed.
+    @discardableResult
+    public mutating func prune(keeping known: Set<UUID>) -> Bool {
+        let before = (feedIDs.count, versions.count)
+        feedIDs.removeAll { !known.contains($0) }
+        let kept = Set(feedIDs.map(\.uuidString))
+        versions = versions.filter { kept.contains($0.key) }
+        return (feedIDs.count, versions.count) != before
+    }
+}
+
+/// Where a server stands: the most urgent status of its software.
+public struct ServerHealth: Sendable {
+    public enum Level: Equatable, Sendable { case empty, upToDate, upgrade, updates, security }
+    public let level: Level
+    /// Status of each installed piece of software, in install order.
+    public let software: [(feedID: UUID, status: SoftwareStatus)]
+    /// Software with a security update (only when severity tags are shown).
+    public var securityCount: Int { software.filter { $0.status.level == .security }.count }
+    /// Software with an update or, without a version set, New releases.
+    public var updateCount: Int { software.filter { $0.status.level >= .updates }.count }
+
+    /// `showSeverity` follows Settings → Display.
+    /// `feeds` tells release feeds from blogs (`Feed.tracksVersions`); software
+    /// whose feed is missing is treated as a release feed.
+    public init(_ server: Server, entries: [Entry], feeds: [Feed] = [], showSeverity: Bool) {
+        let blogs = Set(feeds.filter { !$0.tracksVersions }.map(\.id))
+        software = server.feedIDs.map { id in
+            (id, SoftwareStatus(feedID: id, running: server.version(of: id), entries: entries,
+                                showSeverity: showSeverity, tracksVersions: !blogs.contains(id)))
+        }
+        switch software.map(\.status.level).max() {
+        case nil: level = .empty
+        case .upToDate?: level = .upToDate
+        case .upgrade?: level = .upgrade
+        case .updates?: level = .updates
+        case .security?: level = .security
+        }
     }
 }
 
@@ -59,6 +114,11 @@ public enum ServerAddress {
     }
 
     public static func isValid(_ raw: String) -> Bool { classify(raw) != nil }
+
+    /// The address is optional: blank is acceptable, anything else must be valid.
+    public static func isAcceptable(_ raw: String) -> Bool {
+        raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isValid(raw)
+    }
 
     static func isIPv4(_ s: String) -> Bool {
         let parts = s.split(separator: ".", omittingEmptySubsequences: false)

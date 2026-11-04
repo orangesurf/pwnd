@@ -35,27 +35,27 @@ private enum SoftwareDrag {
 /// Where a server stands, from the new releases of its software. Shown under
 /// the server's name like a VM's power state.
 struct ServerStatus {
-    enum Level { case upToDate, updates, security, empty }
+    enum Level { case upToDate, upgrade, updates, security, empty }
     let level: Level
     let text: String
 
+    /// Security updates are shown only with severity tags on (Settings → Display).
     @MainActor init(_ server: Server, model: AppModel) {
-        let fresh = model.newReleases(on: server)
-        let critical = fresh.filter { $0.severity == .critical }.count
-        if server.feedIDs.isEmpty {
-            level = .empty; text = "No software"
-        } else if critical > 0 {
-            level = .security; text = "\(critical) security update\(critical == 1 ? "" : "s")"
-        } else if !fresh.isEmpty {
-            level = .updates; text = "\(fresh.count) new release\(fresh.count == 1 ? "" : "s")"
-        } else {
-            level = .upToDate; text = "Up to date"
+        let health = ServerHealth(server, entries: model.entries, feeds: model.feeds, showSeverity: model.settings.showSeverity)
+        func plural(_ n: Int, _ word: String) -> String { "\(n) \(word)\(n == 1 ? "" : "s")" }
+        switch health.level {
+        case .empty: level = .empty; text = "No software"
+        case .security: level = .security; text = plural(health.securityCount, "security update")
+        case .updates: level = .updates; text = plural(health.updateCount, "update")
+        case .upgrade: level = .upgrade; text = "Newer versions available"
+        case .upToDate: level = .upToDate; text = "Up to date"
         }
     }
 
     var color: Color {
         switch level {
         case .upToDate: return .green
+        case .upgrade: return .secondary
         case .updates: return .blue
         case .security: return .red
         case .empty: return .secondary
@@ -65,6 +65,7 @@ struct ServerStatus {
     var symbol: String {
         switch level {
         case .upToDate: return "checkmark.circle.fill"
+        case .upgrade: return "arrow.up.circle"
         case .updates: return "arrow.down.circle.fill"
         case .security: return "exclamationmark.octagon.fill"
         case .empty: return "circle.dashed"
@@ -312,11 +313,20 @@ private struct ServerDetail: View {
                 software
                 updates
                 DetailSection(title: "Notes", symbol: "note.text") {
-                    TextField("Location, OS, anything else", text: $notes, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .lineLimit(2...6)
+                    // Return adds a line; notes save when focus leaves or the server changes.
+                    TextEditor(text: $notes)
+                        .font(.body)
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: 54, maxHeight: 180)
                         .focused($focus, equals: .notes)
-                        .onSubmit(commit)
+                        .overlay(alignment: .topLeading) {
+                            if notes.isEmpty {
+                                Text("Location, OS, anything else")
+                                    .foregroundStyle(.tertiary)
+                                    .padding(.leading, 5)
+                                    .allowsHitTesting(false)
+                            }
+                        }
                 }
             }
             .padding(18)
@@ -357,7 +367,7 @@ private struct ServerDetail: View {
                 GridRow {
                     Text("Address:").foregroundStyle(.secondary)
                     HStack {
-                        TextField("192.168.1.10 or node.local", text: $address)
+                        TextField("Optional, e.g. 192.168.1.10 or node.local", text: $address)
                             .textFieldStyle(.roundedBorder)
                             .monospaced()
                             .focused($focus, equals: .address)
@@ -413,7 +423,7 @@ private struct ServerDetail: View {
             DetailSection(title: "New Releases", symbol: "bell.badge") {
                 ForEach(fresh.prefix(8)) { e in
                     HStack(spacing: 8) {
-                        if e.severity > .routine { SeverityBadge(severity: e.severity, compact: true) }
+                        if model.settings.showSeverity, e.severity > .routine { SeverityBadge(severity: e.severity, compact: true) }
                         VStack(alignment: .leading, spacing: 1) {
                             Text(e.title).lineLimit(1)
                             Text(model.feedName(e.feedID)).font(.caption).foregroundStyle(.secondary)
@@ -471,31 +481,34 @@ private struct AddressBadge: View {
     }
 }
 
+/// One installed piece of software: its running version (typed or picked
+/// from the releases pwnd has seen) and what that means.
 private struct InstalledRow: View {
     @EnvironmentObject private var model: AppModel
     let server: Server
     let feed: Feed
     @State private var hovering = false
+    @State private var version = ""
+    @FocusState private var editing: Bool
+
+    private var saved: String { server.version(of: feed.id) ?? "" }
 
     var body: some View {
-        let latest = model.latestRelease(feed.id)
-        let fresh = model.entries.filter { $0.feedID == feed.id && !$0.read }
-        let critical = fresh.contains { $0.severity == .critical }
+        let status = SoftwareStatus(feedID: feed.id, running: saved, entries: model.entries,
+                                    showSeverity: model.settings.showSeverity, tracksVersions: feed.tracksVersions)
         HStack(spacing: 10) {
             Image(systemName: "shippingbox.fill").foregroundStyle(Color.accentColor)
             VStack(alignment: .leading, spacing: 1) {
                 Text(feed.name).lineLimit(1)
-                Text(latest.map { "Latest: \($0.title)" } ?? "No releases fetched yet")
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(caption(status))
+                    .font(.caption)
+                    .foregroundStyle(status.runningInvalid || status.level == .security ? Color.red : Color.secondary)
+                    .lineLimit(1)
+                    .help(caption(status))
             }
-            Spacer()
-            if !fresh.isEmpty {
-                Text("\(fresh.count) new")
-                    .font(.caption.monospacedDigit().weight(.semibold))
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .foregroundStyle(critical ? .white : .primary)
-                    .background(Capsule().fill(critical ? Color.red : Color.accentColor.opacity(0.2)))
-            }
+            Spacer(minLength: 8)
+            badge(status)
+            if feed.tracksVersions { versionPicker(status) }
             Button {
                 withAnimation(.snappy) { model.uninstall([feed.id], from: server.id) }
             } label: {
@@ -508,9 +521,91 @@ private struct InstalledRow: View {
         .padding(.vertical, 6)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+        .onAppear { version = saved }
+        .onChange(of: saved) { _, new in if !editing { version = new } }
+        .onChange(of: editing) { _, now in if !now { commit() } }
+        .onDisappear { if editing { commit() } }
         .contextMenu {
-            if let link = latest?.link { Button("Open Latest Release") { NSWorkspace.shared.open(link) } }
+            if let link = status.latest?.entry.link { Button("Open Latest Release") { NSWorkspace.shared.open(link) } }
+            // `newer` is highest first, so its last entry is the next release up.
+            if let next = status.newer.last, next.id != status.latest?.entry.id, let link = next.link {
+                Button("Open Next Release") { NSWorkspace.shared.open(link) }
+            }
             Button("Remove from \(server.name)") { model.uninstall([feed.id], from: server.id) }
+        }
+    }
+
+    /// A field for the running version, and a menu of the versions pwnd has seen.
+    private func versionPicker(_ status: SoftwareStatus) -> some View {
+        HStack(spacing: 2) {
+            TextField("Version", text: $version)
+                .textFieldStyle(.roundedBorder)
+                .monospaced()
+                .frame(width: 96)
+                .focused($editing)
+                .onSubmit(commit)
+                .help("The version this server runs, e.g. 29.4. Leave blank if you don't know.")
+            Menu {
+                if status.known.isEmpty { Text("No releases fetched yet") }
+                ForEach(status.known.prefix(15), id: \.self) { v in
+                    Button(v.text) { version = v.text; commit() }
+                }
+                if !saved.isEmpty {
+                    Divider()
+                    Button("Clear Version") { version = ""; commit() }
+                }
+            } label: {
+                Image(systemName: "chevron.up.chevron.down")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Pick from the releases pwnd has seen")
+        }
+    }
+
+    private func commit() {
+        guard version.trimmingCharacters(in: .whitespacesAndNewlines) != saved else { return }
+        model.setVersion(version, of: feed.id, on: server.id)
+    }
+
+    /// What the running version means, in words.
+    private func caption(_ s: SoftwareStatus) -> String {
+        let latest = s.latest.map { "latest \($0.version.text)" }
+        guard feed.tracksVersions else {
+            return s.newCount > 0 ? "\(s.newCount) new · a news feed, so no versions to compare" : "A news feed, so no versions to compare"
+        }
+        if s.runningInvalid { return "Not a version number; type one such as 29.4" }
+        guard s.running != nil else {
+            let base = latest.map { "Set the version you run · \($0)" } ?? "No releases fetched yet"
+            return s.newCount > 0 ? "\(s.newCount) new · " + base : base
+        }
+        switch s.level {
+        case .upToDate: return "Up to date" + (latest.map { " · \($0)" } ?? "")
+        case .updates, .security:
+            if let u = s.update {
+                let prefix = s.level == .security ? "Security update to " : "Update to "
+                return prefix + u.text + (s.latest.map { $0.version.sameRelease(as: u) ? "" : " · \(latest!)" } ?? "")
+            }
+            return "Security fixes in newer releases · " + (latest ?? "")
+        case .upgrade:
+            return "Latest in this series · newer series: \(s.latest?.version.text ?? "?")"
+        }
+    }
+
+    @ViewBuilder
+    private func badge(_ s: SoftwareStatus) -> some View {
+        let label: String? = switch s.level {
+        case .security: s.running == nil ? "\(s.newCount) new" : "Security"
+        case .updates: s.running == nil ? "\(s.newCount) new" : "Update"
+        case .upgrade, .upToDate: nil
+        }
+        if let label {
+            Text(label)
+                .font(.caption.monospacedDigit().weight(.semibold))
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .foregroundStyle(s.level == .security ? .white : .primary)
+                .background(Capsule().fill(s.level == .security ? Color.red : Color.accentColor.opacity(0.2)))
         }
     }
 }
@@ -707,7 +802,7 @@ private struct NewServerSheet: View {
     @State private var address = ""
     @FocusState private var nameFocused: Bool
 
-    private var addressValid: Bool { ServerAddress.isValid(address) }
+    private var addressValid: Bool { ServerAddress.isAcceptable(address) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -725,7 +820,7 @@ private struct NewServerSheet: View {
                 GridRow {
                     Text("Address:")
                     HStack {
-                        TextField("192.168.1.10", text: $address)
+                        TextField("Optional, e.g. 192.168.1.10", text: $address)
                             .textFieldStyle(.roundedBorder)
                             .monospaced()
                             .onSubmit(create)
@@ -734,7 +829,7 @@ private struct NewServerSheet: View {
                 }
             }
             .frame(width: 400)
-            Text("An IPv4 or IPv6 address, or a hostname such as node.local. Add software after creating it.")
+            Text("The address is optional: an IPv4 or IPv6 address, or a hostname such as node.local. Add software after creating it.")
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(width: 400, alignment: .leading)

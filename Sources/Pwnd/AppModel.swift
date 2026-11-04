@@ -75,6 +75,7 @@ final class AppModel: ObservableObject {
             feeds = snap.feeds
             entries = snap.entries
             servers = snap.servers
+            pruneServers()
             // Version 3 replaced read/unread with New/Old and starts everything
             // in New; earlier installs had history filed as read.
             if snap.version < 3 { for i in entries.indices { entries[i].read = false } }
@@ -574,6 +575,16 @@ final class AppModel: ObservableObject {
         save()
     }
 
+    /// Takes software that is no longer subscribed off every server.
+    /// Returns true if any server changed; the caller saves.
+    @discardableResult
+    private func pruneServers() -> Bool {
+        let known = Set(feeds.map(\.id))
+        var changed = false
+        for i in servers.indices where servers[i].prune(keeping: known) { changed = true }
+        return changed
+    }
+
     func serverName(_ id: UUID) -> String { servers.first { $0.id == id }?.name ?? "?" }
 
     func removeServer(_ id: UUID) {
@@ -607,10 +618,9 @@ final class AppModel: ObservableObject {
             .sorted(by: Entry.newestFirst)
     }
 
-    /// The latest release title for a feed, used as the "version" column.
-    func latestRelease(_ feedID: UUID) -> Entry? {
-        entries.filter { $0.feedID == feedID && $0.kind != .tagOnly }.max { a, b in Entry.newestFirst(b, a) }
-            ?? entries.filter { $0.feedID == feedID }.max { a, b in Entry.newestFirst(b, a) }
+    /// Sets the version a server runs of installed software; blank clears it.
+    func setVersion(_ version: String, of feed: UUID, on server: UUID) {
+        updateServer(server) { $0.setVersion(version, for: feed) }
     }
 
     // MARK: - Groups
@@ -687,6 +697,7 @@ final class AppModel: ObservableObject {
         let (s, removed) = list.replace(FeedList.State(groups: groups, order: order, feeds: feeds))
         (groups, order, feeds) = (s.groups, s.order, s.feeds)
         entries.removeAll { removed.contains($0.feedID) }
+        pruneServers()
         generation += 1
         save()
         show("Replaced with \(feeds.count) feed\(feeds.count == 1 ? "" : "s")")

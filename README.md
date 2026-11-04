@@ -44,7 +44,14 @@ pwnd scores only what the feed contains. Some projects publish little in the rel
 
 ## Servers
 
-The Servers section of the main sidebar, Window → Servers (⌘2), or the rack button in the main toolbar keeps track of which machines run which software, laid out like a VM manager. Click **New** and give the server a name and an IPv4/IPv6 address or hostname. Then add software from the catalog on the right (your feeds, grouped as in the sidebar): drag a row onto the server in the list or onto its Installed Software box, double-click it, or type in the "Search software to add…" field and press Return. Each server shows its status: up to date, new releases, or security updates, counted from New releases of its software. In the main sidebar, selecting a server lists the releases of its software; double-click it, or use Open in Servers, to edit it. Removing a server leaves its feeds subscribed; unsubscribing a feed removes it from every server.
+Servers track which machines run which software. Open the Servers window with Window → Servers (⌘2) or the rack button in the main toolbar.
+
+- **Add a server:** click **New** and give it a name. The address is optional: an IPv4 or IPv6 address, or a hostname such as `node.local`. pwnd only stores and shows the address; it never connects to it.
+- **Add software:** use the catalog on the right, which lists your feeds grouped as in the sidebar. Drag a row onto the server in the list or onto its Installed Software box, double-click it, or type in "Search software to add…" and press Return.
+- **Running version:** type the version each server runs next to the software, or pick one from the releases pwnd has seen. It's optional. pwnd compares version numbers, not publish dates, so Bitcoin Core 32.1 is the latest even when 29.5 was published after it. Release candidates are ignored. Firmware lines in one repo, such as trezor's `core/` and `legacy/` tags or Coldcard's Q and X models, are compared only with their own line.
+- **Status:** with a version set, a newer release in the same series (29.4 → 29.5) is an update, and a newer series alone (29.5 → 32.1) shows as "newer versions available". Without a version, status counts New releases. News feeds such as a project blog have no versions, so they always count New posts. With severity tags on (Settings → Display), critical releases show as security updates.
+- **Main sidebar:** once you have a server, a Servers section appears under All Feeds. Selecting a server lists the releases of its software; double-click it, or use Open in Servers, to edit it.
+- **Removing:** removing a server leaves its feeds subscribed. Unsubscribing a feed, or replacing the feed list, takes it off every server.
 
 ## How scoring works
 

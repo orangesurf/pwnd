@@ -70,8 +70,12 @@ struct Sidebar: View {
                 .contextMenu { Button("Move All to Old") { model.markAllRead(in: .all) } }
                 .padding(.bottom, 10)
 
-                serversSection
-                    .padding(.bottom, 10)
+                // Shown once a server exists; until then the toolbar's rack
+                // button, Window → Servers and ⌘2 open the Servers window.
+                if !model.servers.isEmpty {
+                    serversSection
+                        .padding(.bottom, 10)
+                }
 
                 ForEach(model.topLevel) { item in
                     switch item {
@@ -163,15 +167,6 @@ struct Sidebar: View {
             .padding(.horizontal, 8)
             .frame(height: 20)
 
-            if model.servers.isEmpty {
-                row(selected: false) {
-                    Label("Add a Server…", systemImage: "plus.rectangle.on.rectangle")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                }
-                .onTapGesture { openServers(nil) }
-                .help("Track which machines run which software")
-            }
             ForEach(model.servers) { server in
                 let status = ServerStatus(server, model: model)
                 row(selected: selection == .server(server.id)) {
