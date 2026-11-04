@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationXML)
+import FoundationXML // XMLParser lives here on Linux
+#endif
 
 /// A shareable list of feeds and groups, written and read as OPML 2.0, the
 /// usual format for moving subscriptions between feed readers. A group is an

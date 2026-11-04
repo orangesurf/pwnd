@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking // URLSession lives here on Linux
+#endif
 
 /// GitHub's unauthenticated REST limit is 60 requests an hour per IP, shared
 /// with anything else on the network; with a token it is 5,000 an hour per

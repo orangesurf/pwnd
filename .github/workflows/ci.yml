@@ -1,30 +1,92 @@
 name: CI
 
+# Hosted macOS runners can take a long time to be assigned, Linux ones start
+# almost at once. PwndCore and its tests are plain Foundation, so they run on
+# Linux for fast feedback; the macOS job (app build, plus the same tests
+# against Apple's Foundation) runs alongside and does not block it.
+
 on:
   push:
+    branches: [main]
+    tags: ['v*']
+    paths-ignore: ['**.md', 'LICENSE', '.gitignore']
   pull_request:
+    paths-ignore: ['**.md', 'LICENSE', '.gitignore']
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  test:
-    runs-on: macos-latest
+  test-linux:
+    name: Test (Linux)
+    runs-on: ubuntu-latest
+    # Same Swift as the Xcode the app is built with.
+    container: swift:6.4-noble
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+
+      - name: Show toolchain
+        run: swift --version
+
+      # On Linux, Package.swift leaves out the SwiftUI app, so this builds
+      # PwndCore, pwnd-scan and the tests.
+      - name: Build
+        run: swift build --build-tests
+
+      - name: Run tests
+        run: swift test --skip-build --parallel
+
+  macos:
+    name: Test and build app (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
 
       - name: Show toolchain
         run: |
-          swift --version
           xcodebuild -version
+          swift --version
 
-      - name: Test
-        run: swift test
+      # Builds every target, including the app, so a compile error in the UI
+      # code fails here. The tests take about a second, so they run here too.
+      - name: Build all targets
+        run: swift build --build-tests
 
-      - name: Build
+      - name: Run tests
+        run: swift test --skip-build --parallel
+
+      - name: Build app bundle
         run: ./scripts/build-app.sh
+
+      # build-app.sh ignores codesign failures (`|| true`), so check the
+      # bundle explicitly before publishing it.
+      - name: Verify bundle
+        run: |
+          APP=build/pwnd.app
+          test -x "$APP/Contents/MacOS/pwnd"
+          test -f "$APP/Contents/Resources/AppIcon.icns"
+          plutil -lint "$APP/Contents/Info.plist"
+          codesign --verify --strict --verbose=2 "$APP"
+          lipo -info "$APP/Contents/MacOS/pwnd"
+
+      - name: Package
+        id: package
+        run: |
+          NAME="pwnd-${GITHUB_REF_NAME//\//-}-${GITHUB_SHA::7}"
+          # ditto keeps the bundle's symlinks, permissions and signature intact.
+          ditto -c -k --keepParent build/pwnd.app "$NAME.zip"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: ${{ steps.package.outputs.name }}.zip
+          if-no-files-found: error
+          retention-days: 30
